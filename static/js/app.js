@@ -8,7 +8,8 @@ let latencyChart = null;
 const latencyData = {
     labels: [],
     values: [],
-    maxPoints: 60
+    maxPoints: 60,
+    packetLossCount: 0
 };
 
 // Initialize on page load
@@ -128,8 +129,8 @@ function displayEvents(events) {
 
     container.innerHTML = events.map(event => {
         const timestamp = new Date(event.timestamp).toLocaleString();
-        const eventClass = event.event_type === 'packet_loss' ? 'packet-loss' : 'threshold';
-        const eventTypeText = event.event_type === 'packet_loss' ? 'Packet Loss' : 'Threshold Exceeded';
+        const eventClass = (event.event_type === 'packet_loss' || event.event_type === 'packet-loss') ? 'packet-loss' : 'threshold';
+        const eventTypeText = (event.event_type === 'packet_loss' || event.event_type === 'packet-loss') ? 'Packet Loss' : 'Threshold Exceeded';
 
         return `
             <div class="event-item ${eventClass}">
@@ -181,6 +182,15 @@ function setupEventListeners() {
             alert('Error updating configuration');
         }
     });
+
+    // Toggle configuration visibility
+    const toggleBtn = document.getElementById('toggleConfig');
+    if (toggleBtn) {
+        toggleBtn.addEventListener('click', function () {
+            const configCard = document.getElementById('configCard');
+            configCard.classList.toggle('hidden');
+        });
+    }
 
     // Refresh events button
     document.getElementById('refreshEvents').addEventListener('click', loadEvents);
@@ -238,6 +248,9 @@ function updateLatencyDisplay(data) {
     const statusElement = document.getElementById('currentStatus');
 
     if (data.packet_loss) {
+        latencyData.packetLossCount++;
+        document.getElementById('packetLossCount').textContent = latencyData.packetLossCount;
+
         latencyElement.textContent = 'Packet Loss';
         latencyElement.style.color = '#ef4444';
         statusElement.innerHTML = '<span class="badge badge-danger">Packet Loss</span>';
