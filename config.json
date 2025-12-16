@@ -1,0 +1,7 @@
+{
+    "destination_ip": "172.17.30.51",
+    "latency_threshold_ms": 5,
+    "ping_interval_seconds": 1,
+    "max_graph_points": 60,
+    "event_retention_days": 30
+}

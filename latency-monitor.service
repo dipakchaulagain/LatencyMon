@@ -1,0 +1,15 @@
+[Unit]
+Description=Latency Monitor Service
+After=network.target
+
+[Service]
+Type=simple
+User=latency-monitor
+WorkingDirectory=/opt/latency-monitor
+Environment="PATH=/opt/latency-monitor/venv/bin"
+ExecStart=/opt/latency-monitor/venv/bin/python app.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
