@@ -216,4 +216,4 @@ Typical resource usage on a 1 core, 2GB RAM VM:
 This project is provided as-is for monitoring purposes.
 
 > [!NOTE]
-> This product is built with [Vibecode](https://vibecode.ai).
+> This product is built with VibeCoding using Antigravity.
