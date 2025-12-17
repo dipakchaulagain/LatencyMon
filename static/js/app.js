@@ -48,15 +48,75 @@ async function loadMonitors() {
         const response = await fetch('/api/monitors');
         const monitors = await response.json();
         const grid = document.getElementById('dashboardGrid');
-        grid.innerHTML = '';
+
+        // Don't clear grid. keys: widget-{id}
+        const existingIds = new Set(Array.from(grid.children).map(c => parseInt(c.id.replace('widget-', ''))));
 
         monitors.forEach(monitor => {
-            createWidget(monitor);
+            if (!existingIds.has(monitor.id)) {
+                createWidget(monitor);
+            }
         });
+
+        // Remove deleted monitors? (Optional, but good for sync)
+        const newIds = new Set(monitors.map(m => m.id));
+        existingIds.forEach(id => {
+            if (!newIds.has(id)) {
+                const el = document.getElementById(`widget-${id}`);
+                if (el) el.remove();
+                if (charts[id]) delete charts[id];
+                if (chartData[id]) delete chartData[id];
+            }
+        });
+
+        // Restore data from LocalStorage if available (and empty buffer)
+        restoreData();
+
     } catch (e) {
         console.error("Failed to load monitors", e);
     }
 }
+
+function saveData() {
+    localStorage.setItem('monitorData', JSON.stringify(chartData));
+}
+
+function restoreData() {
+    const saved = localStorage.getItem('monitorData');
+    if (saved) {
+        const parsed = JSON.parse(saved);
+        Object.keys(parsed).forEach(id => {
+            if (chartData[id] && charts[id]) {
+                // Merge/Restore
+                const savedData = parsed[id];
+                // Only restore if we have no data yet (on load)? 
+                // Or overwrite? Let's append if empty.
+                if (chartData[id].labels.length === 0 && savedData.labels.length > 0) {
+                    chartData[id] = savedData;
+
+                    // Restore Chart
+                    const chart = charts[id];
+                    chart.data.labels = savedData.labels;
+                    if (savedData.type === 'bandwidth') {
+                        // Restore In/Out
+                        // Expect savedData.values = { in: [], out: [] }
+                        if (savedData.values && savedData.values.in) {
+                            chart.data.datasets[0].data = savedData.values.in;
+                            chart.data.datasets[1].data = savedData.values.out;
+                        }
+                    } else if (savedData.type === 'ping') {
+                        chart.data.datasets[0].data = savedData.values;
+                    }
+                    chart.update();
+                }
+            }
+        });
+    }
+}
+
+// Periodically save
+setInterval(saveData, 5000);
+
 
 function createWidget(monitor) {
     const grid = document.getElementById('dashboardGrid');
@@ -94,14 +154,21 @@ function createWidget(monitor) {
                     <span class="delete-widget" onclick="deleteMonitor(${monitor.id})">&times;</span>
                 </div>
             </div>
+            <div style="font-size:0.75rem; color:#6b7280; margin-top:-5px; margin-bottom:5px;">
+                ${monitor.type === 'ping' ? `Dest: ${monitor.target}` :
+            monitor.type === 'bandwidth' ? (monitor.settings?.interface_name ? `Int: ${monitor.settings.interface_name}` : `ID: ${monitor.target}`) : ''}
+            </div>
             <div class="widget-stats-row">
                 ${statsHtml}
             </div>
         </div>
-        <div class="widget-canvas-container" style="${monitor.type === 'events' ? 'overflow-y:auto;' : ''}">
+
+        <div class="widget-canvas-container" style="${monitor.type === 'events' ? 'height: 250px; overflow-y: auto;' : ''}">
             ${monitor.type === 'events' ?
-            `<table class="table" style="font-size:0.8rem; width:100%;">
-                    <thead><tr><th>Time</th><th>Event</th><th>Message</th></tr></thead>
+            `<table class="table" style="font-size:0.8rem; width:100%; border-collapse: collapse;">
+                    <thead style="position: sticky; top: 0; background: var(--bg-card); z-index: 1;">
+                        <tr><th style="text-align:left; padding:5px;">Time</th><th style="text-align:left; padding:5px;">Event</th><th style="text-align:left; padding:5px;">Message</th></tr>
+                    </thead>
                     <tbody id="logs-${monitor.id}"></tbody>
                  </table>`
             : `<canvas id="chart-${monitor.id}"></canvas>`}
@@ -171,8 +238,9 @@ function createWidget(monitor) {
     // Initialize data storage with stats tracking
     chartData[monitor.id] = {
         type: monitor.type,
+        settings: monitor.settings,
         labels: [],
-        values: [],
+        values: monitor.type === 'bandwidth' ? { in: [], out: [] } : [],
         pingStats: { total: 0, loss: 0, sum: 0, count: 0, max: 0, streak: 0 },
         bwStats: { maxIn: 0, maxOut: 0 }
     };
@@ -268,9 +336,15 @@ function updateWidget(data) {
         labels.push(timestamp);
         mainData.push(data.value);
 
+        // Persist
+        stats.labels.push(timestamp);
+        stats.values.push(data.value);
+
         if (labels.length > 60) {
             labels.shift();
             mainData.shift();
+            stats.labels.shift();
+            stats.values.shift();
         }
     } else if (data.type === 'bandwidth') {
         // Convert bps to Mbps
@@ -285,19 +359,37 @@ function updateWidget(data) {
         document.getElementById(`in-max-${id}`).textContent = `${stats.bwStats.maxIn} Mbps`;
         document.getElementById(`out-max-${id}`).textContent = `${stats.bwStats.maxOut} Mbps`;
 
+
+
         // Main Value
         valEl.textContent = `↓${inMbps} ↑${outMbps} Mbps`;
-        valEl.style.color = '#34d399';
+
+        // Color logic for bandwidth
+        const limit = stats.settings?.threshold_mbps;
+        if (limit && (inMbps > limit || outMbps > limit)) {
+            valEl.style.color = '#fbbf24'; // Yellow
+        } else {
+            valEl.style.color = '#34d399'; // Green
+        }
 
         const labels = chart.data.labels;
         labels.push(timestamp);
         chart.data.datasets[0].data.push(inMbps);
         chart.data.datasets[1].data.push(outMbps);
 
+        // Persist
+        stats.labels.push(timestamp);
+        if (!stats.values.in) stats.values = { in: [], out: [] };
+        stats.values.in.push(inMbps);
+        stats.values.out.push(outMbps);
+
         if (labels.length > 60) {
             labels.shift();
             chart.data.datasets[0].data.shift();
             chart.data.datasets[1].data.shift();
+            stats.labels.shift();
+            stats.values.in.shift();
+            stats.values.out.shift();
         }
     }
 
@@ -343,6 +435,8 @@ function setupModals() {
             thresholdGroup.classList.remove('hidden');
         } else if (typeSelect.value === 'bandwidth') {
             bwGroup.classList.remove('hidden');
+            const bwThresholdGroup = document.getElementById('bandwidthThresholdGroup');
+            if (bwThresholdGroup) bwThresholdGroup.classList.remove('hidden');
             loadDevicesForSelect();
         } else if (typeSelect.value === 'events') {
             // No extra settings needed for now
@@ -363,8 +457,19 @@ function setupModals() {
             if (!target) return alert('Target IP Required');
             settings.threshold = parseFloat(threshold);
         } else if (type === 'bandwidth') {
-            target = document.getElementById('interfaceSelect').value;
+            const ifSelect = document.getElementById('interfaceSelect');
+            target = ifSelect.value;
             if (!target) return alert('Interface Required');
+
+            // Save Interface Name
+            if (ifSelect.selectedIndex >= 0) {
+                const text = ifSelect.options[ifSelect.selectedIndex].text;
+                // Format: "Name (idx: X)" -> split
+                settings.interface_name = text.split(' (idx:')[0];
+            }
+
+            const bwVal = document.getElementById('bwThreshold').value;
+            if (bwVal) settings.threshold_mbps = parseFloat(bwVal);
         } else if (type === 'events') {
             target = "Global Events"; // Dummy target for backend validation
         }

@@ -3,12 +3,23 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any
 import threading
 import json
+import os
 
 class Database:
     """SQLite database management for monitoring tool v2."""
     
-    def __init__(self, db_file: str = 'latency_monitor.db'):
+    def __init__(self, db_file: str = None):
+        # Use environment variable if set, otherwise use default
+        if db_file is None:
+            db_file = os.environ.get('DATABASE_URL', 'latency_monitor.db')
+        
         self.db_file = db_file
+        
+        # Ensure parent directory exists
+        db_dir = os.path.dirname(self.db_file)
+        if db_dir and not os.path.exists(db_dir):
+            os.makedirs(db_dir, exist_ok=True)
+        
         self.lock = threading.Lock()
         self.init_database()
     
@@ -36,6 +47,19 @@ class Database:
                     message TEXT
                 )
             ''')
+
+            # Metrics table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS metrics (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    monitor_id INTEGER,
+                    monitor_name TEXT,
+                    type TEXT,
+                    timestamp TEXT,
+                    value_json TEXT
+                )
+            ''')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_metrics_ts ON metrics(timestamp)')
             
             # Devices table
             cursor.execute('''
@@ -231,7 +255,18 @@ class Database:
             count = cursor.rowcount
             conn.commit()
             conn.close()
+            conn.close()
             return count
+
+    def get_events_range(self, hours: int) -> List[Dict[str, Any]]:
+        with self.lock:
+            conn = self.get_connection()
+            cutoff = (datetime.now() - timedelta(hours=hours)).isoformat()
+            rows = conn.execute('''
+                SELECT * FROM events WHERE timestamp >= ? ORDER BY timestamp DESC
+            ''', (cutoff,)).fetchall()
+            conn.close()
+            return [dict(row) for row in rows]
     
     def get_event_count(self) -> int:
         with self.lock:
@@ -239,3 +274,24 @@ class Database:
             count = conn.execute('SELECT COUNT(*) FROM events').fetchone()[0]
             conn.close()
             return count
+
+    def log_metric(self, monitor_id, monitor_name, m_type, timestamp, value_data):
+        import json
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute('''
+                INSERT INTO metrics (monitor_id, monitor_name, type, timestamp, value_json)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (monitor_id, monitor_name, m_type, timestamp, json.dumps(value_data)))
+            conn.commit()
+            conn.close()
+
+    def get_metrics_range(self, hours: int) -> List[Dict[str, Any]]:
+        with self.lock:
+            conn = self.get_connection()
+            cutoff = (datetime.now() - timedelta(hours=hours)).isoformat()
+            rows = conn.execute('''
+                SELECT * FROM metrics WHERE timestamp >= ? ORDER BY timestamp ASC
+            ''', (cutoff,)).fetchall()
+            conn.close()
+            return [dict(row) for row in rows]

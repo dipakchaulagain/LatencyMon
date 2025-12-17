@@ -155,6 +155,7 @@ class PingMonitor(BaseMonitor):
             if latency is None:
                 return {
                     'monitor_id': self.id,
+                    'monitor_name': self.name,
                     'type': 'ping',
                     'timestamp': timestamp,
                     'value': None,
@@ -166,6 +167,7 @@ class PingMonitor(BaseMonitor):
             
             return {
                 'monitor_id': self.id,
+                'monitor_name': self.name,
                 'type': 'ping',
                 'timestamp': timestamp,
                 'value': latency,
@@ -209,6 +211,7 @@ class BandwidthMonitor(BaseMonitor):
         
         data = {
             'monitor_id': self.id,
+            'monitor_name': self.name,
             'type': 'bandwidth',
             'timestamp': timestamp,
             'in_bps': 0,
@@ -233,6 +236,15 @@ class BandwidthMonitor(BaseMonitor):
                 # Bytes to Bits / Seconds
                 data['in_bps'] = (diff_in * 8) / time_delta
                 data['out_bps'] = (diff_out * 8) / time_delta
+                
+                # Check Threshold
+                threshold_mbps = float(self.settings.get('threshold_mbps', 0))
+                if threshold_mbps > 0:
+                    in_mbps = data['in_bps'] / 1e6
+                    out_mbps = data['out_bps'] / 1e6
+                    if in_mbps > threshold_mbps or out_mbps > threshold_mbps:
+                         data['threshold_exceeded'] = True
+                         data['threshold'] = threshold_mbps
         
         # Update previous
         self.prev_octets = {

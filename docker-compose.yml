@@ -8,11 +8,20 @@ services:
     ports:
       - "5000:5000"
     volumes:
-      - ./latency_monitor.db:/app/latency_monitor.db
+      - ./data:/data
     environment:
       - TZ=Asia/Kathmandu
+      - DATABASE_URL=/data/latency_monitor.db
+    # Privileged/cap_add required for ping
     # Privileged/cap_add required for ping
     cap_add:
       - NET_RAW
-    # Alternatively use privileged if cap_add fails on some hosts
-    # privileged: true
+    networks:
+      - monitoring_net
+
+networks:
+  monitoring_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.16.254.0/24

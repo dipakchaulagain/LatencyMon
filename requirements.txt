@@ -4,3 +4,5 @@ python-socketio==5.10.0
 ping3==4.0.4
 pysnmp==4.4.12
 pyasn1==0.4.8
+fpdf
+matplotlib
