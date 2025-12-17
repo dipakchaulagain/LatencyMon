@@ -22,6 +22,28 @@ A lightweight web-based latency monitoring tool designed for resource-constraine
 - **Python**: 3.7 or higher
 - **Network**: Outbound ICMP (ping) access
 
+## Quick Start with Docker (Recommended)
+
+The easiest way to deploy the application is using Docker:
+
+```bash
+# Build and start the container
+docker compose build
+docker compose up -d
+
+# Check status
+docker compose logs
+
+# Access the application at http://localhost:5000
+```
+
+**Database**: The SQLite database will be automatically created in the `./data/` directory on first run and persists across container restarts.
+
+**Stopping**: 
+```bash
+docker compose down
+```
+
 ## Installation
 
 ### 1. Clone or Copy Files
@@ -216,4 +238,4 @@ Typical resource usage on a 1 core, 2GB RAM VM:
 This project is provided as-is for monitoring purposes.
 
 > [!NOTE]
-> This product is built with VibeCoding using Antigravity.
+> This product is built with [Vibecode](https://vibecode.ai).

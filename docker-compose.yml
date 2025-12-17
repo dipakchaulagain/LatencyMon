@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  latency-monitor:
+    build: .
+    container_name: latency-monitor
+    restart: always
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data:/data
+    environment:
+      - TZ=Asia/Kathmandu
+      - DATABASE_URL=/data/latency_monitor.db
+    # Privileged/cap_add required for ping
+    # Privileged/cap_add required for ping
+    cap_add:
+      - NET_RAW
+    networks:
+      - monitoring_net
+
+networks:
+  monitoring_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.16.254.0/24

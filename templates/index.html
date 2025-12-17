@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Latency Monitor</title>
+    <title>SentryMon v2</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
@@ -13,86 +13,115 @@
 <body>
     <div class="container">
         <header>
-            <h1>🌐 Latency Monitor</h1>
+            <h1>⚡ SentryMon</h1>
             <div class="header-controls">
+                <div class="live-clock" id="liveClock"
+                    style="margin-right: 20px; font-family: monospace; color: var(--text-secondary);"></div>
+                <div style="margin-right: 15px;">
+                    <a href="/api/report?hours=6" target="_blank" class="btn btn-secondary"
+                        style="font-size: 0.8rem;">Report 6h</a>
+                    <a href="/api/report?hours=24" target="_blank" class="btn btn-secondary"
+                        style="font-size: 0.8rem;">Report 24h</a>
+                </div>
                 <div class="connection-status" id="connectionStatus">
                     <span class="status-dot"></span>
                     <span class="status-text">Connecting...</span>
                 </div>
-                <button class="btn btn-icon" id="toggleConfig" title="Toggle Configuration">
-                    ⚙️
+                <button class="btn btn-icon" id="openDeviceManager" title="Manage Devices">
+                    📡
                 </button>
             </div>
         </header>
 
-        <div class="main-content">
-            <!-- Current Status Card -->
-            <div class="card status-card">
-                <h2>Current Status</h2>
-                <div class="status-grid">
-                    <div class="status-item">
-                        <div class="status-label">Destination IP</div>
-                        <div class="status-value" id="currentDestination">-</div>
-                    </div>
-                    <div class="status-item">
-                        <div class="status-label">Current Latency</div>
-                        <div class="status-value latency-value" id="currentLatency">-</div>
-                    </div>
-                    <div class="status-item">
-                        <div class="status-label">Threshold</div>
-                        <div class="status-value" id="currentThreshold">-</div>
-                    </div>
-                    <div class="status-item">
-                        <div class="status-label">Packet Drops</div>
-                        <div class="status-value" id="packetLossCount" style="color: var(--accent-red)">0</div>
-                    </div>
-                    <div class="status-item">
-                        <div class="status-label">Status</div>
-                        <div class="status-value" id="currentStatus">
-                            <span class="badge badge-info">Initializing</span>
-                        </div>
-                    </div>
+        <div class="toolbar">
+            <button class="btn btn-primary" id="addWidgetBtn">+ Add Widget</button>
+        </div>
+
+        <div class="dashboard-grid" id="dashboardGrid">
+            <!-- Widgets will be injected here -->
+        </div>
+
+        <!-- Add Widget Modal -->
+        <div class="modal hidden" id="addWidgetModal">
+            <div class="modal-content">
+                <h3>Add Monitor</h3>
+                <div class="form-group">
+                    <label>Widget Type</label>
+                    <select id="monitorType">
+                        <option value="ping">Ping Latency</option>
+                        <option value="bandwidth">Interface Bandwidth</option>
+                        <option value="events">Event Log</option>
+                    </select>
+                </div>
+
+                <div class="form-group" id="pingTargetGroup">
+                    <label>Target IP</label>
+                    <input type="text" id="targetIP" placeholder="8.8.8.8">
+                </div>
+
+                <div class="form-group hidden" id="bandwidthTargetGroup">
+                    <label>Select Device</label>
+                    <select id="deviceSelect">
+                        <option value="">Select a device...</option>
+                    </select>
+
+                    <label>Select Interface</label>
+                    <select id="interfaceSelect" disabled>
+                        <option value="">Select interface...</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>Polling Interval (seconds)</label>
+                    <select id="monitorInterval">
+                        <option value="1">1 second</option>
+                        <option value="2">2 seconds</option>
+                        <option value="5">5 seconds</option>
+                        <option value="10">10 seconds</option>
+                        <option value="30">30 seconds</option>
+                    </select>
+                </div>
+
+                <div class="form-group" id="pingThresholdGroup">
+                    <label>Latency Threshold (ms)</label>
+                    <input type="number" id="monitorThreshold" value="5" min="1">
+                </div>
+
+                <div class="form-group hidden" id="bandwidthThresholdGroup">
+                    <label>Bandwidth Threshold (Mbps)</label>
+                    <input type="number" id="bwThreshold" placeholder="Optional (e.g. 100)">
+                </div>
+
+                <div class="form-group">
+                    <label>Display Name</label>
+                    <input type="text" id="monitorName" placeholder="My Monitor">
+                </div>
+
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" id="cancelAddWidget">Cancel</button>
+                    <button class="btn btn-primary" id="saveWidget">Add</button>
                 </div>
             </div>
+        </div>
 
-            <!-- Configuration Card -->
-            <div class="card config-card" id="configCard">
-                <h2>Configuration</h2>
-                <form id="configForm">
-                    <div class="form-group">
-                        <label for="destinationIp">Destination IP</label>
-                        <input type="text" id="destinationIp" name="destination_ip" placeholder="8.8.8.8" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="thresholdMs">Latency Threshold (ms)</label>
-                        <input type="number" id="thresholdMs" name="latency_threshold_ms" min="1" step="0.1"
-                            placeholder="5" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="intervalSeconds">Ping Interval (seconds)</label>
-                        <input type="number" id="intervalSeconds" name="ping_interval_seconds" min="0.1" step="0.1"
-                            placeholder="1" required>
-                    </div>
-                    <button type="submit" class="btn btn-primary">Update Configuration</button>
-                </form>
-            </div>
+        <!-- Device Manager Modal -->
+        <div class="modal hidden" id="deviceManagerModal">
+            <div class="modal-content large">
+                <h3>Device Management</h3>
 
-            <!-- Graph Card -->
-            <div class="card graph-card">
-                <h2>Latency Graph (Last 60 seconds)</h2>
-                <div class="chart-container">
-                    <canvas id="latencyChart"></canvas>
+                <div class="add-device-form">
+                    <input type="text" id="newDeviceName" placeholder="Router Name" class="input-inline">
+                    <input type="text" id="newDeviceIP" placeholder="192.168.1.1" class="input-inline">
+                    <input type="text" id="newDeviceCommunity" placeholder="public" class="input-inline">
+                    <button class="btn btn-small btn-primary" id="addDeviceBtn">Add Device</button>
                 </div>
-            </div>
 
-            <!-- Events Card -->
-            <div class="card events-card">
-                <div class="events-header">
-                    <h2>Events Log</h2>
-                    <button class="btn btn-small" id="refreshEvents">Refresh</button>
+                <div class="devices-list" id="devicesList">
+                    <!-- Devices list loaded here -->
                 </div>
-                <div class="events-container" id="eventsContainer">
-                    <div class="loading">Loading events...</div>
+
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" id="closeDeviceManager">Close</button>
                 </div>
             </div>
         </div>
