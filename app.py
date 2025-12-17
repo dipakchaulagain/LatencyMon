@@ -2,165 +2,218 @@ from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO, emit
 from config import Config
 from database import Database
-from ping_monitor import PingMonitor
+from monitor_manager import MonitorManager
+from snmp_manager import SNMPManager
 import atexit
+import logging
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'latency-monitor-secret-key-change-in-production'
+app.config['SECRET_KEY'] = 'latency-monitor-v2-secret'
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Initialize components
 config = Config()
 db = Database()
-monitor = None
+monitor_manager = MonitorManager(db, config)
 
-def init_monitor():
-    """Initialize the ping monitor with current configuration."""
-    global monitor
-    
-    if monitor and monitor.is_running():
-        monitor.stop()
-    
-    dest_ip = config.get('destination_ip')
-    threshold = config.get('latency_threshold_ms')
-    interval = config.get('ping_interval_seconds')
-    
-    monitor = PingMonitor(dest_ip, threshold, interval)
-    
-    # Register callbacks
-    monitor.on_data(on_ping_data)
-    monitor.on_threshold_exceeded(on_threshold_exceeded)
-    monitor.on_packet_loss(on_packet_loss)
-    
-    monitor.start()
+# Setup simple logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def on_ping_data(data):
-    """Callback for ping data - emit to all connected clients."""
-    socketio.emit('ping_data', data)
+def on_monitor_data(data):
+    """Callback for real-time data."""
+    if data:
+        socketio.emit('monitor_data', data)
+        
+        # Check for events
+        event_type = None
+        message = None
+        
+        if data.get('type') == 'ping':
+            if data.get('packet_loss'):
+                event_type = 'packet_loss'
+                message = f"Packet loss detected for {data.get('monitor_id')}"
+            elif data.get('threshold_exceeded'):
+                event_type = 'threshold_exceeded'
+                message = f"Latency {data.get('value')}ms exceeded threshold {data.get('threshold')}ms"
+                
+        if event_type:
+            # Log to DB
+            db.log_event(
+                event_type=event_type,
+                latency_ms=data.get('value'),
+                threshold_ms=data.get('threshold'),
+                destination_ip=str(data.get('monitor_id')), # ID referer
+                message=message
+            )
+            # Emit event for UI logs
+            socketio.emit('new_event', {
+                'timestamp': data['timestamp'],
+                'event_type': event_type,
+                'message': message,
+                'monitor_id': data.get('monitor_id')
+            })
 
-def on_threshold_exceeded(event):
-    """Callback for threshold violations - log and emit."""
-    db.log_event(
-        event_type='threshold_exceeded',
-        latency_ms=event['latency_ms'],
-        threshold_ms=event['threshold_ms'],
-        destination_ip=event['destination_ip'],
-        message=event['message']
-    )
-    socketio.emit('threshold_event', event)
+monitor_manager.set_callbacks(on_data=on_monitor_data)
 
-def on_packet_loss(event):
-    """Callback for packet loss - log and emit."""
-    db.log_event(
-        event_type='packet_loss',
-        destination_ip=event['destination_ip'],
-        message=event['message']
-    )
-    socketio.emit('packet_loss_event', event)
+# --- Routes ---
 
 @app.route('/')
 def index():
-    """Serve the main web interface."""
     return render_template('index.html')
 
-@app.route('/api/config', methods=['GET'])
-def get_config():
-    """Get current configuration."""
-    return jsonify(config.get_all())
+# --- API: Device Management ---
 
-@app.route('/api/config', methods=['POST'])
-def update_config():
-    """Update configuration."""
-    try:
-        data = request.json
-        
-        # Validate inputs
-        if 'destination_ip' in data and not data['destination_ip']:
-            return jsonify({'error': 'Destination IP cannot be empty'}), 400
-        
-        if 'latency_threshold_ms' in data:
-            try:
-                threshold = float(data['latency_threshold_ms'])
-                if threshold <= 0:
-                    return jsonify({'error': 'Threshold must be positive'}), 400
-            except ValueError:
-                return jsonify({'error': 'Invalid threshold value'}), 400
-        
-        if 'ping_interval_seconds' in data:
-            try:
-                interval = float(data['ping_interval_seconds'])
-                if interval < 0.1:
-                    return jsonify({'error': 'Interval must be at least 0.1 seconds'}), 400
-            except ValueError:
-                return jsonify({'error': 'Invalid interval value'}), 400
-        
-        # Update configuration
-        config.update_config(data)
-        
-        # Restart monitor with new settings
-        init_monitor()
-        
-        return jsonify({'success': True, 'config': config.get_all()})
+@app.route('/api/devices', methods=['GET'])
+def get_devices():
+    return jsonify(db.get_devices())
+
+@app.route('/api/devices', methods=['POST'])
+def add_device():
+    data = request.json
+    name = data.get('name')
+    ip = data.get('ip_address')
+    community = data.get('community_string')
     
+    if not all([name, ip, community]):
+        return jsonify({'error': 'Missing fields'}), 400
+        
+    try:
+        # Validate SNMP
+        manager = SNMPManager()
+        if not manager.validate_connection(ip, community):
+            return jsonify({'error': 'SNMP validation failed. Check IP and Community.'}), 400
+            
+        device_id = db.add_device(name, ip, community)
+        return jsonify({'success': True, 'id': device_id})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/devices/<int:device_id>', methods=['DELETE'])
+def delete_device(device_id):
+    try:
+        db.delete_device(device_id)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/devices/<int:device_id>/interfaces', methods=['GET'])
+def get_interfaces(device_id):
+    # Try getting from DB first
+    interfaces = db.get_interfaces(device_id)
+    if not interfaces:
+        # If empty, try discovery
+        device = db.get_device(device_id)
+        if not device:
+            return jsonify({'error': 'Device not found'}), 404
+            
+        try:
+            manager = SNMPManager()
+            discovered = manager.discover_interfaces(device['ip_address'], device['community_string'])
+            db.save_interfaces(device_id, discovered)
+            interfaces = db.get_interfaces(device_id)
+        except Exception as e:
+            return jsonify({'error': f"Discovery failed: {str(e)}"}), 500
+            
+    return jsonify(interfaces)
+
+@app.route('/api/devices/<int:device_id>/discover', methods=['POST'])
+def discover_interfaces(device_id):
+    """Force discovery."""
+    device = db.get_device(device_id)
+    if not device:
+        return jsonify({'error': 'Device not found'}), 404
+        
+    try:
+        manager = SNMPManager()
+        discovered = manager.discover_interfaces(device['ip_address'], device['community_string'])
+        db.save_interfaces(device_id, discovered)
+        return jsonify({'success': True, 'count': len(discovered)})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# --- API: Monitors (Widgets) ---
+
+@app.route('/api/monitors', methods=['GET'])
+def get_monitors():
+    return jsonify(db.get_monitors())
+
+@app.route('/api/monitors', methods=['POST'])
+def add_monitor():
+    data = request.json
+    type_ = data.get('type')
+    name = data.get('name')
+    target = data.get('target')
+    settings = data.get('settings', {})
+    
+    if not all([type_, name, target]):
+        return jsonify({'error': 'Missing fields'}), 400
+        
+    try:
+        monitor_id = db.add_monitor(type_, name, target, settings)
+        monitor_manager.reload_monitor(monitor_id)
+        return jsonify({'success': True, 'id': monitor_id})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/monitors/<int:monitor_id>', methods=['DELETE'])
+def delete_monitor(monitor_id):
+    try:
+        db.delete_monitor(monitor_id)
+        monitor_manager.remove_monitor(monitor_id)
+        return jsonify({'success': True})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/events', methods=['GET'])
 def get_events():
-    """Get recent events."""
-    try:
-        limit = request.args.get('limit', 100, type=int)
-        events = db.get_recent_events(limit)
-        return jsonify(events)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    limit = request.args.get('limit', 50, type=int)
+    return jsonify(db.get_recent_events(limit))
 
-@app.route('/api/events/cleanup', methods=['POST'])
-def cleanup_events():
-    """Cleanup old events."""
-    try:
-        retention_days = config.get('event_retention_days', 30)
-        deleted_count = db.cleanup_old_events(retention_days)
-        return jsonify({'success': True, 'deleted_count': deleted_count})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/stats', methods=['GET'])
-def get_stats():
-    """Get monitoring statistics."""
-    try:
-        event_count = db.get_event_count()
-        return jsonify({
-            'total_events': event_count,
-            'monitor_running': monitor.is_running() if monitor else False,
-            'current_config': config.get_all()
-        })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+# --- SocketIO ---
 
 @socketio.on('connect')
 def handle_connect():
-    """Handle client connection."""
     print('Client connected')
     emit('connection_status', {'status': 'connected'})
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    """Handle client disconnection."""
     print('Client disconnected')
 
-def cleanup():
-    """Cleanup on application shutdown."""
-    if monitor:
-        monitor.stop()
+# --- Cleanup ---
 
-# Register cleanup handler
+def cleanup():
+    if monitor_manager:
+        monitor_manager.stop()
+
 atexit.register(cleanup)
 
 if __name__ == '__main__':
-    # Initialize and start monitor
-    init_monitor()
+    # Initialize DB (if new)
+    # Auto-add default ping monitor if DB is empty?
+    # For v2, let's keep it clean or migrate config.json if needed.
     
-    # Run the Flask-SocketIO server
-    print("Starting Latency Monitor on http://0.0.0.0:5000")
-    socketio.run(app, host='0.0.0.0', port=5000, debug=False)
+    # Check if we need to migrate v1 config
+    try:
+        if not db.get_monitors():
+            # Minimal migration of v1 config to a monitor
+            legacy_config = config.get_all()
+            if legacy_config.get('destination_ip'):
+                db.add_monitor(
+                    'ping', 
+                    'Default Latency', 
+                    legacy_config['destination_ip'], 
+                    {
+                        'threshold': legacy_config.get('latency_threshold_ms', 5), 
+                        'interval': legacy_config.get('ping_interval_seconds', 1)
+                    }
+                )
+    except Exception as e:
+        print(f"Migration warning: {e}")
+
+    # Start Monitor Loop
+    monitor_manager.start()
+    
+    print("Starting V2 Monitor on http://0.0.0.0:5000")
+    socketio.run(app, host='0.0.0.0', port=5000, debug=False, allow_unsafe_werkzeug=True)

@@ -6,9 +6,9 @@ A lightweight web-based latency monitoring tool designed for resource-constraine
 
 - 🌐 **Continuous Ping Monitoring**: Real-time latency tracking to any destination IP
 - 📊 **Live Graphing**: Interactive Chart.js graph showing the last 60 seconds of data
-- ⚠️ **Threshold Detection**: Automatic detection and logging when latency exceeds configurable threshold (default: 5ms)
-- 📉 **Packet Loss Detection**: Identifies and logs packet loss events with timestamps
-- 🎨 **Modern UI**: Beautiful dark-themed interface with real-time updates
+- ⚠️ **Threshold Detection**: Automatic detection and logging when latency exceeds configurable threshold
+- 📉 **Packet Loss Detection**: Identifies and logs packet loss events with a dedicated counter
+- 📱 **Responsive Design**: Optimized UI for mobile and desktop screens with collapsible panels
 - ⚙️ **Configurable**: Easy web-based configuration for destination IP, threshold, and ping interval
 - 💾 **Event Logging**: SQLite database stores all threshold violations and packet loss events
 - 🔄 **Auto-Start**: Systemd service for automatic startup and restart on failure
@@ -103,17 +103,17 @@ Access the web interface at `http://your-vm-ip:5000`
 
 The interface provides:
 
-1. **Current Status**: Real-time display of current latency, destination IP, and threshold
-2. **Configuration Panel**: Update destination IP, threshold, and ping interval
-3. **Latency Graph**: Live graph showing the last 60 seconds of latency data
-4. **Events Log**: List of all threshold violations and packet loss events
+1. **Current Status**: Real-time display of current latency, destination IP, threshold, and packet drops.
+2. **Configuration Panel**: Toggle using the ⚙️ icon to update settings.
+3. **Latency Graph**: Live graph showing the last 60 seconds of latency data.
+4. **Events Log**: List of all threshold violations and packet loss events.
 
 ### Configuration
 
 You can update the configuration in two ways:
 
-1. **Web Interface**: Use the configuration form on the main page
-2. **Config File**: Edit `config.json` and restart the service
+1. **Web Interface**: Use the collapsible configuration form on the main page.
+2. **Config File**: Edit `config.json` and restart the service.
 
 ### API Endpoints
 
@@ -215,14 +215,5 @@ Typical resource usage on a 1 core, 2GB RAM VM:
 
 This project is provided as-is for monitoring purposes.
 
-## Support
-
-For issues or questions, check the logs:
-
-```bash
-# Application logs
-sudo journalctl -u latency-monitor -f
-
-# Or if running manually
-python app.py
-```
+> [!NOTE]
+> This product is built with [Vibecode](https://vibecode.ai).
